@@ -1,0 +1,43 @@
+name: Setup Docker builder with local registry
+description: Setup Docker builder to push to local registry
+
+inputs:
+  registry-fqdn:
+    description: "Local registry FQDN"
+    required: true
+  tls-cert:
+    description: "TLS certificate for the registry"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install ca-certificates package
+      shell: bash
+      run: |
+        # Install ca-certificates package (required for update-ca-certificates)
+        sudo apt-get update -y
+        sudo apt-get install -y ca-certificates
+
+    - name: Add TLS certificate
+      shell: bash
+      run: |
+        # Install the self-signed certificate
+        echo "${{ inputs.tls-cert }}" | sudo tee "/usr/local/share/ca-certificates/${{ inputs.registry-fqdn }}.crt" > /dev/null
+        sudo update-ca-certificates --fresh
+
+        # Add the certificate to the Docker configuration
+        sudo mkdir -p "/etc/docker/certs.d/${{ inputs.registry-fqdn }}"
+        echo "${{ inputs.tls-cert }}" | sudo tee "/etc/docker/certs.d/${{ inputs.registry-fqdn }}/ca.crt" > /dev/null
+        sudo systemctl restart docker
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: network=host
+        buildkitd-config-inline: |
+          [registry."${{ inputs.registry-fqdn }}"]
+          ca=["/etc/docker/certs.d/${{ inputs.registry-fqdn }}/ca.crt"]
