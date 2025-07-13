@@ -77,16 +77,16 @@ jobs:
           registry-fqdn: ${{ inputs.registry-fqdn }}
           tls-cert: ${{ steps.vault.outputs.TLS_CRT }}
 
-      - name: Build and push by digest
+      - name: Build and push image (by tag)
         id: build
         uses: docker/build-push-action@v6
         with:
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          push: true
           platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
           tags: |
             ${{ env.REGISTRY_IMAGE }}:latest
             ${{ env.REGISTRY_IMAGE }}:${{ inputs.image-version }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ inputs.image-version }}
 
@@ -143,7 +143,9 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY_IMAGE }}:latest \
+            --tag ${{ env.REGISTRY_IMAGE }}:${{ inputs.image-version }} \
             $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
 
       - name: Inspect image
