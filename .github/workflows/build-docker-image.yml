@@ -19,6 +19,16 @@ on:
         type: string
         required: true
 
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_SECRET:
+        required: true
+      VAULT_ROLE_ID:
+        required: true
+      VAULT_SECRET_ID:
+        required: true
+
 env:
   REGISTRY_IMAGE: ${{ inputs.registry-fqdn }}/${{ inputs.image-name }}
 
