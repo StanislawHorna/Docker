@@ -1,0 +1,141 @@
+name: Build docker image
+run-name: Build
+
+on:
+  workflow_call:
+    inputs:
+      registry-fqdn:
+        type: string
+        required: false
+        default: docker-hub.horna.local
+      vault-url:
+        type: string
+        required: false
+        default: http://10.0.10.10:8200
+      image-name:
+        type: string
+        required: true
+      image-version:
+        type: string
+        required: true
+
+env:
+  REGISTRY_IMAGE: ${{ inputs.registry-fqdn }}/${{ inputs.image-name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+
+      - name: Connect Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Get TLS cert from Vault
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ inputs.vault-url }}
+          method: approle
+          roleId: ${{ secrets.VAULT_ROLE_ID }}
+          secretId: ${{ secrets.VAULT_SECRET_ID }}
+          secrets: |
+            cert_secrets/data/${{ inputs.registry-fqdn }} certificate | TLS_CRT
+
+      - name: Setup Image builder
+        uses: StanislawHornaGitHub/Docker/setup-builder-for-local-registry@main
+        with:
+          registry-fqdn: ${{ inputs.registry-fqdn }}
+          tls-cert: ${{ steps.vault.outputs.TLS_CRT }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.REGISTRY_IMAGE }}:latest
+            ${{ env.REGISTRY_IMAGE }}:${{ inputs.image-version }}
+          build-args: |
+            APP_VERSION=${{ inputs.image-version }}
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Connect Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Get TLS cert from Vault
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ inputs.vault-url }}
+          method: approle
+          roleId: ${{ secrets.VAULT_ROLE_ID }}
+          secretId: ${{ secrets.VAULT_SECRET_ID }}
+          secrets: |
+            cert_secrets/data/${{ inputs.registry-fqdn }} certificate | TLS_CRT
+
+      - name: Setup Image builder
+        uses: StanislawHornaGitHub/Docker/setup-builder-for-local-registry@main
+        with:
+          registry-fqdn: ${{ inputs.registry-fqdn }}
+          tls-cert: ${{ steps.vault.outputs.TLS_CRT }}
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:latest
