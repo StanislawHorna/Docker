@@ -12,6 +12,10 @@ on:
         type: string
         required: false
         default: http://10.0.10.10:8200
+      vault-cert-path:
+        type: string
+        required: false
+        default: cert_secrets
       image-name:
         type: string
         required: true
@@ -72,7 +76,7 @@ jobs:
           roleId: ${{ secrets.VAULT_ROLE_ID }}
           secretId: ${{ secrets.VAULT_SECRET_ID }}
           secrets: |
-            cert_secrets/data/${{ inputs.registry-fqdn }} certificate | TLS_CRT
+            ${{ inputs.vault-cert-path }}/data/${{ inputs.registry-fqdn }} certificate | TLS_CRT
 
       - name: Setup Image builder
         uses: StanislawHornaGitHub/Docker/setup-builder-for-local-registry@main
@@ -135,7 +139,7 @@ jobs:
           roleId: ${{ secrets.VAULT_ROLE_ID }}
           secretId: ${{ secrets.VAULT_SECRET_ID }}
           secrets: |
-            cert_secrets/data/${{ inputs.registry-fqdn }} certificate | TLS_CRT
+            ${{ inputs.vault-cert-path }}/data/${{ inputs.registry-fqdn }} certificate | TLS_CRT
 
       - name: Setup Image builder
         uses: StanislawHornaGitHub/Docker/setup-builder-for-local-registry@main
